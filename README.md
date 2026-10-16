@@ -23,6 +23,18 @@ One Python file, standard library only.
 python3 kittyfetch.py
 ```
 
+To have it as a command, install it once and then just type `kittyfetch`:
+
+```bash
+git clone https://github.com/FlorianLebecque/kittyfetch.git
+python3 kittyfetch/kittyfetch.py --install    # copies it to ~/.local/bin/kittyfetch
+kittyfetch
+```
+
+If `~/.local/bin` isn't on your `PATH`, the installer prints the line to add to
+your shell's rc file. `kittyfetch --uninstall` removes it again; re-run
+`--install` after a `git pull` to update.
+
 Needs Python 3.8+ on Linux or macOS and a truecolor terminal (kitty, WezTerm,
 Alacritty, GNOME Terminal, iTerm2, Windows Terminal via WSL, ...). There is
 nothing to install. Ctrl-C or `q` quits and restores the terminal.
@@ -57,6 +69,7 @@ python3 kittyfetch.py --timelapse 120    # watch a day go by in 12 minutes
 | `--hour H` | pretend it is this hour, for the sky outside |
 | `--timelapse X` | run the day/night cycle X times faster |
 | `--seed N` | reproducible runs |
+| `--install` / `--uninstall` | add or remove the `kittyfetch` command in `~/.local/bin` |
 
 ## The cats
 

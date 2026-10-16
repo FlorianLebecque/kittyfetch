@@ -3066,6 +3066,34 @@ def shots(args):
             k += 1
 
 
+def install(remove=False):
+    """Copy this script to ~/.local/bin/kittyfetch (or $XDG_BIN_HOME) so it runs as a command."""
+    import shutil
+    bindir = os.environ.get('XDG_BIN_HOME') or os.path.join(os.path.expanduser('~'), '.local', 'bin')
+    dest = os.path.join(bindir, 'kittyfetch')
+    if remove:
+        if os.path.exists(dest):
+            os.remove(dest)
+            print('removed', dest)
+        else:
+            print('nothing to remove at', dest)
+        return
+    src = os.path.realpath(__file__)
+    if os.path.realpath(dest) == src:
+        print('already installed at', dest)
+        return
+    os.makedirs(bindir, exist_ok=True)
+    shutil.copyfile(src, dest)
+    os.chmod(dest, 0o755)
+    print('installed', dest)
+    path = [os.path.realpath(p) for p in os.environ.get('PATH', '').split(os.pathsep) if p]
+    if os.path.realpath(bindir) in path:
+        print('run it with: kittyfetch')
+    else:
+        print('%s is not on your PATH yet. Add this line to your ~/.bashrc or ~/.zshrc:' % bindir)
+        print('    export PATH="%s:$PATH"' % bindir)
+
+
 def main():
     ap = argparse.ArgumentParser(description='A cat lives in your idle terminal.')
     ap.add_argument('--ascii', action='store_true', help='plain ASCII mode, no colour')
@@ -3077,6 +3105,8 @@ def main():
     ap.add_argument('--hour', type=float, default=None, help='pretend it is this hour (0-24)')
     ap.add_argument('--timelapse', type=float, default=1.0, help='speed up the day/night cycle')
     ap.add_argument('--seed', type=int, default=None, help='random seed, for reproducible runs')
+    ap.add_argument('--install', action='store_true', help='install as the `kittyfetch` command in ~/.local/bin')
+    ap.add_argument('--uninstall', action='store_true', help='remove the installed `kittyfetch` command')
     dev = ap.add_argument_group('development')
     dev.add_argument('--force', default='', help='comma-separated behaviours to run first, e.g. zoomies,knock')
     dev.add_argument('--soak', type=float, default=0, help='headless soak test: seconds of sim per seed')
@@ -3088,7 +3118,9 @@ def main():
     dev.add_argument('--size', type=int, nargs=2, default=(120, 70), help='pixel size W H for --shots')
     dev.add_argument('--laser', action='store_true', help='start a laser session for --shots')
     args = ap.parse_args()
-    if args.soak:
+    if args.install or args.uninstall:
+        install(remove=args.uninstall)
+    elif args.soak:
         soak(args)
     elif args.shots:
         shots(args)
