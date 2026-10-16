@@ -89,8 +89,8 @@ def spring(x, v, target, k, dt):
     return (f * x + dt * v + dt * hkk * target) * det, (v + hkk * (target - x)) * det
 
 
-def ik(ax, ay, tx, ty, l1, l2):
-    """2-bone IK in the cat's side plane; the joint bends backwards (cat elbow/hock)."""
+def ik(ax, ay, tx, ty, l1, l2, bend=-1):
+    """2-bone IK in a leg's plane. bend=-1 puts the joint behind the line (elbow), +1 in front (knee)."""
     dx, dy = tx - ax, ty - ay
     d = math.hypot(dx, dy)
     dmax = l1 + l2 - 1e-3
@@ -99,7 +99,7 @@ def ik(ax, ay, tx, ty, l1, l2):
         dx, dy, d = dx * k, dy * k, dmax
         tx, ty = ax + dx, ay + dy
     d = max(d, abs(l1 - l2) + 1e-3)
-    a = math.atan2(dy, dx) - math.acos(clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1))
+    a = math.atan2(dy, dx) + bend * math.acos(clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1))
     return ax + l1 * math.cos(a), ay + l1 * math.sin(a), tx, ty
 
 
@@ -348,7 +348,7 @@ class World:
     """The terminal as a room: the status bar is the floor, the 'outside' pane's
     bottom border is a ledge, and a tty-clock sits above that pane."""
 
-    def __init__(self, W, H, S, rng, ascii_mode, info_w=0):
+    def __init__(self, W, H, S, rng, ascii_mode, info_box=None):
         self.W, self.H, self.S, self.rng, self.ascii = W, H, S, rng, ascii_mode
         u = S
         R = H // 2
@@ -369,6 +369,14 @@ class World:
         self.sill_y = 2 * r1 + 1                 # cats stand on the pane's bottom border
         self.sx0, self.sx1 = float(self.pc0), float(self.pc1 + 1)
         self.glass = (self.wx0, self.wy0, self.wx1, self.wy1)
+        # walkable surfaces: name -> (x0, x1, y). Pane borders are ledges; screen edges are walls.
+        self.platforms = {'floor': (0.0, float(W), self.gy), 'sill': (self.sx0, self.sx1, self.sill_y)}
+        if info_box:
+            c0, _, c1, r1 = info_box
+            y = 2 * r1 + 1
+            if 26 * u < y < self.gy - 16 * u and c1 - c0 > 24 * u:
+                self.platforms['shelf'] = (float(c0), float(c1 + 1), y)
+        self.walls = (0.0, float(W))
         self.bed_x, self.bed_hw = W - max(21 * u, 0.17 * W), 11 * u   # favourite nap spot
         if self.ck:
             self.clock_x, self.clock_y = (self.pc0 + self.pc1 + 1) / 2, 2 + 2.5 * self.ck
@@ -397,13 +405,14 @@ class World:
 
     def bounds(self, level):
         u = self.S
-        if level == 'sill':
-            lo, hi = self.sx0 + 8.5 * u, self.sx1 - 8.5 * u
-            return (lo, hi) if lo < hi else ((lo + hi) / 2,) * 2
-        return 14 * u, self.W - 15 * u
+        if level == 'floor':
+            return 14 * u, self.W - 15 * u
+        x0, x1, _ = self.platforms[level]
+        lo, hi = x0 + 8.5 * u, x1 - 8.5 * u
+        return (lo, hi) if lo < hi else ((lo + hi) / 2,) * 2
 
     def ground(self, level, x):
-        return self.sill_y if level == 'sill' else self.gy
+        return self.platforms[level][2]
 
     def update(self, dt, t, hour):
         self.hour = hour
@@ -771,8 +780,8 @@ POSE_BASE = dict(hx=-6.8, hy=8.4, sx=6.0, sy=9.0, arch=0.4, hdx=3.4, hdy=4.6, ht
                  stride=0.0, gal=0.0)
 POSES = {
     'stand': {},
-    'sit': dict(hx=-4.2, hy=4.7, sx=1.6, sy=9.6, arch=0.3, hdx=1.7, hdy=5.6, ffx=4.0, hfx=-0.9,
-                tailA=-1.0, tailC=-0.5, tailK=4.5, tailZ=2.2, tailS=0.04),
+    'sit': dict(hx=-5.8, hy=4.6, sx=1.6, sy=11.8, arch=0.3, hdx=1.8, hdy=4.6, ffx=3.6, hfx=-1.4,
+                tailA=-1.3, tailC=-0.36, tailK=7.0, tailZ=2.2, tailS=0.04),
     'loaf': dict(hx=-5.4, hy=4.3, sx=3.8, sy=4.6, arch=0.9, hdx=3.0, hdy=4.3, ffx=4.8, ffy=1.3, hfx=-3.2,
                  hfy=1.3, eye=0.75, tailA=-0.9, tailC=-0.45, tailK=4.0, tailZ=1.3, tailS=0.03, rb=1.07),
     'curl': dict(hx=-4.2, hy=3.9, sx=2.8, sy=3.8, arch=1.4, hdx=3.6, hdy=-0.7, htilt=-0.3, ffx=5.2, ffy=1.1,
@@ -790,6 +799,8 @@ POSES = {
                 tailA=0.2, tailC=0.05),
     'arch': dict(hx=-4.6, hy=10.6, sx=4.0, sy=10.2, arch=4.6, hdx=3.0, hdy=2.6, htilt=-0.2, ffx=5.0, hfx=-5.0,
                  ear=0.8, pup=1.0, tailA=1.45, tailC=-0.02, puff=1.0),
+    'wall': dict(hx=-0.8, hy=4.0, sx=0.9, sy=16.2, arch=0.2, hdx=1.4, hdy=3.0, htilt=0.9, ffx=5.0, ffy=13.0,
+                 hfx=5.0, hfy=2.6, ear=0.3, pup=1.0, tailA=-0.7, tailC=0.0, tailS=0.02),
     'skid': dict(hx=-6.6, hy=6.2, sx=5.0, sy=8.4, arch=0.0, hdx=3.6, hdy=4.0, htilt=0.2, ffx=10.0, hfx=-4.0,
                  ear=0.9, tailA=0.9, tailC=-0.1),
 }
@@ -799,6 +810,21 @@ LEG_LAT = (1.5, -1.5, 1.7, -1.7)       # near-front, far-front, near-hind, far-h
 WALK_OFF = (0.25, 0.75, 0.0, 0.5)      # lateral-sequence walk
 GAL_OFF = (0.55, 0.65, 0.0, 0.1)       # rotary gallop
 TAIL_N, TAIL_SEG = 9, 1.75
+SPINE_N, SPINE_L = 7, 13.4             # vertebra segments, total spine length (body units)
+
+
+def arc_bend(ratio):
+    """Total bend angle of a circular arc whose chord / length equals ratio (bisection)."""
+    lo, hi = 0.0, TAU - 1e-3
+    for _ in range(22):
+        m = (lo + hi) / 2
+        if (math.sin(m / 2) / (m / 2) if m > 1e-6 else 1.0) > ratio:
+            lo = m
+        else:
+            hi = m
+    return (lo + hi) / 2
+
+
 TURN_K = 4.5                           # base turn stiffness (head x2.1, shoulders x1.45, hips x1)
 # Coats. Missing keys fall back: paw/muzzle -> cream, face/ear/tail -> fur, ring/tip -> stripe, eye2 -> eye.
 COATS = {
@@ -908,6 +934,8 @@ class Cat:
             self.gen = None
         self.busy = self.airborne = False
         self.v = self.vt = 0.0
+        if self.level not in w.platforms:
+            self.level = 'floor'
         self.x = clamp(self.x * fx, *w.bounds(self.level))
         self.y = w.ground(self.level, self.x)
         self.fwx = [None] * 4
@@ -971,6 +999,7 @@ class Cat:
             'yarn': 0.05 + 1.3 * e * b,
             'zoomies': (0.03 + 0.9 * e * e * b) * (2.5 if night or dusk else 1) * zoom_ok,
             'knock': 1.8 * m * m * e if (s.mug.state == 'sill' and m > 0.45) else 0,
+            'perch': (0.25 + 0.35 * e) if 'shelf' in s.world.platforms else 0,
         }
         for i, name in enumerate(reversed(self.history[-3:])):
             if name in w:
@@ -1140,6 +1169,33 @@ class Cat:
     def palette(self, L):
         return {k: (lit(v, L) if isinstance(v, tuple) else v) for k, v in coat_palette(self.coat).items()}
 
+    # ----------------------------------------------------------- skeleton + render
+    def skeleton(self):
+        """Pose numbers -> joints in 3D, in body units relative to the root (x right, y up,
+        z toward the viewer). The spine is a fixed-length chain of vertebrae bent into an arc,
+        so poses can only bend the back, never stretch it."""
+        p = self.cur
+        thf, thr = self.th, self.thr
+        br = math.sin(self.breath) * self.breath_amp
+        hx, hy = p['hx'] - self.flex, p['hy'] + self.bob_h + 0.18 * br
+        sx, sy = p['sx'] + self.flex, p['sy'] + self.bob_s + 0.12 * br - 1.2 * self.dip
+        # chord from pelvis to the shoulder target: its length sets how much the spine must bend
+        beta = math.atan2(sy - hy, sx - hx)
+        bend = arc_bend(clamp(math.hypot(sx - hx, sy - hy) / SPINE_L, 0.35, 1.0))
+        sgn = 1.0 if p['arch'] >= -0.3 else -1.0          # hump (flexion) or sag (extension)
+        seg = SPINE_L / SPINE_N
+        verts, frames = [(hx * math.cos(thr), hy, hx * math.sin(thr))], []
+        for i in range(SPINE_N):
+            u = (i + 0.5) / SPINE_N
+            pitch = beta + sgn * bend * (0.5 - u)
+            a = lerp(thr, thf, smooth(u))
+            d = (math.cos(pitch) * math.cos(a), math.sin(pitch), math.cos(pitch) * math.sin(a))
+            up = (-math.sin(pitch) * math.cos(a), math.cos(pitch), -math.sin(pitch) * math.sin(a))
+            frames.append((d, up, a, pitch))
+            x, y, z = verts[-1]
+            verts.append((x + d[0] * seg, y + d[1] * seg, z + d[2] * seg))
+        return verts, frames, br
+
     def draw(self, cv, L):
         S, p = self.S, self.cur
         thf, thr = self.th, self.thr
@@ -1147,138 +1203,117 @@ class Cat:
         pal = self.palette(L)
         prims = []
         add = prims.append
-
         puff = p['puff']
-        br = math.sin(self.breath) * self.breath_amp
+        verts, frames, br = self.skeleton()
         rb = p['rb'] * (1 + 0.035 * br) * (1 + 0.25 * puff)
-        hx, hy = p['hx'] - self.flex, p['hy'] + self.bob_h + 0.18 * br
-        sx, sy = p['sx'] + self.flex, p['sy'] + self.bob_s + 0.12 * br
-        vx, vy = sx - hx, sy - hy
-        vl = math.hypot(vx, vy) or 1.0
-        vx, vy = vx / vl, vy / vl
-        nx, ny = -vy, vx                      # "up" normal of the spine
-        arch = p['arch']
-        mx, my = (hx + sx) / 2 + nx * arch, (hy + sy) / 2 + ny * arch
         hipR, chR = 4.5 * rb, 4.15 * rb
-        sy -= 1.2 * self.dip                  # the chest dips as the cat swings round
 
-        def ang(f):  # heading blends from hips to shoulders
-            span = sx - hx
-            return thf if abs(span) < 1e-3 else lerp(thr, thf, smooth((f - hx) / span))
+        def P(pt):  # body units -> screen pixels
+            return X0 + pt[0] * S, Y0 - pt[1] * S
 
-        # Lay the spine out by integrating that heading from the root, so mid-turn
-        # the body is a real C/L-shaped arc instead of a rigid shape rotating.
-        n, SP = 40, 0.5
-        sxs, szs = [0.0] * (2 * n + 1), [0.0] * (2 * n + 1)
-        for i in range(n + 1, 2 * n + 1):
-            a = ang((i - n - 0.5) * SP)
-            sxs[i], szs[i] = sxs[i - 1] + SP * math.cos(a), szs[i - 1] + SP * math.sin(a)
-        for i in range(n - 1, -1, -1):
-            a = ang((i - n + 0.5) * SP)
-            sxs[i], szs[i] = sxs[i + 1] - SP * math.cos(a), szs[i + 1] - SP * math.sin(a)
+        def at(o, a, f, u, l=0.0):  # point in a part frame: origin o, heading a, (forward, up, lateral)
+            return (o[0] + f * math.cos(a) - l * math.sin(a), o[1] + u, o[2] + f * math.sin(a) + l * math.cos(a))
 
-        def spine(f):
-            q = f / SP + n
-            i = min(2 * n - 1, max(0, int(math.floor(q))))
-            t = q - i
-            return sxs[i] + (sxs[i + 1] - sxs[i]) * t, szs[i] + (szs[i + 1] - szs[i]) * t
+        def off(o, fr, f, u):  # point along a vertebra's own forward/up axes
+            d, up = fr[0], fr[1]
+            return (o[0] + d[0] * f + up[0] * u, o[1] + d[1] * f + up[1] * u, o[2] + d[2] * f + up[2] * u)
 
-        def W(f, u, l=0.0, a=None, anchor=None):
-            f0 = f if anchor is None else anchor
-            px_, _ = spine(f0)
-            a = ang(f0) if a is None else a
-            return X0 + (px_ + (f - f0) * math.cos(a) - l * math.sin(a)) * S, Y0 - u * S
+        def plane(pt, a):  # forward coordinate of a 3D point in the vertical plane of heading a
+            return pt[0] * math.cos(a) + pt[2] * math.sin(a)
 
-        def D(f, l=0.0, a=None, anchor=None):
-            f0 = f if anchor is None else anchor
-            _, pz = spine(f0)
-            a = ang(f0) if a is None else a
-            return pz + (f - f0) * math.sin(a) + l * math.cos(a)
-
-        def B(t):
-            a, b, cc = (1 - t) ** 2, 2 * (1 - t) * t, t * t
-            return a * hx + b * mx + cc * sx, a * hy + b * my + cc * sy
-
-        # torso: a spine curve swept with circles, plus haunch and chest
-        top = max(D(B(i / 7)[0]) for i in range(8))  # belly/stripes sit on the torso surface
-        for i in range(8):
-            t = i / 7
-            f, u = B(t)
+        # torso: circles on the vertebrae, haunch, chest, neck
+        top = max(v[2] for v in verts)
+        for i, v in enumerate(verts):
+            t = i / SPINE_N
             r = lerp(hipR * 0.9, chR * 0.94, t) - math.sin(t * PI) * 0.3 * rb
-            X, Y = W(f, u)
-            add((D(f), 0, X, Y, r * S, pal['fur'], 0.14))
-        X, Y = W(hx - 0.2, hy + 0.1, a=thr)
-        add((D(hx, 0, thr) + 0.3, 0, X, Y, hipR * S, pal['fur'], 0.16))
-        cf, cu = sx + vx * 0.5, sy + vy * 0.5
-        X, Y = W(cf, cu, a=thf)
-        add((D(cf, 0, thf) + 0.2, 0, X, Y, chR * S, pal['fur'], 0.14))
-        for t in (0.35, 0.45, 0.55, 0.65, 0.75):  # cream belly
-            f, u = B(t)
-            X, Y = W(f - nx * 1.9 * rb, u - ny * 1.9 * rb)
+            X, Y = P(v)
+            add((v[2], 0, X, Y, r * S, pal['fur'], 0.14))
+        pelvis, shoulder = verts[0], verts[-1]
+        fr0, frN = frames[0], frames[-1]
+        X, Y = P(off(pelvis, fr0, -0.2, 0.1))
+        add((pelvis[2] + 0.3, 0, X, Y, hipR * S, pal['fur'], 0.16))
+        chest = off(shoulder, frN, 0.5, 0.0)
+        X, Y = P(chest)
+        add((chest[2] + 0.2, 0, X, Y, chR * S, pal['fur'], 0.14))
+        for i in (2, 3, 4, 5):  # cream belly along the underside
+            v = off(verts[i], frames[min(i, SPINE_N - 1)], 0.0, -1.9 * rb)
+            X, Y = P(v)
             add((top + 0.05, 0, X, Y, 2.1 * rb * S, pal['cream'], 0.0))
-        X, Y = W(sx + vx * 1.6 - nx * 1.6, sy + vy * 1.6 - ny * 1.6)
-        add((D(sx) + 0.25, 0, X, Y, 2.3 * rb * S, pal['cream'], 0.0))  # bib
-        for t in (0.25, 0.47, 0.69):  # tabby stripes over the back
-            f, u = B(t)
-            r = lerp(hipR * 0.9, chR * 0.94, t)
-            A = W(f + nx * r * 0.95, u + ny * r * 0.95)
-            Bp = W(f + nx * r * 0.35 - vx * 0.8, u + ny * r * 0.35 - vy * 0.8)
+        v = off(shoulder, frN, 1.6, -1.6)
+        X, Y = P(v)
+        add((v[2] + 0.25, 0, X, Y, 2.3 * rb * S, pal['cream'], 0.0))  # bib
+        for i in (2, 3, 5):  # tabby stripes over the back
+            r = lerp(hipR * 0.9, chR * 0.94, i / SPINE_N)
+            A, Bp = P(off(verts[i], frames[i], 0, r * 0.95)), P(off(verts[i], frames[i], -0.8, r * 0.35))
             add((top + 0.06, 1, A[0], A[1], Bp[0], Bp[1], 0.6 * S, 0.25 * S, pal['stripe'], 1.0))
         for a0, a1 in (((-2.4, 3.0), (-0.6, 1.4)), ((-3.6, 1.4), (-1.8, -0.4))):  # haunch stripes
-            A, Bp = W(hx + a0[0], hy + a0[1], a=thr), W(hx + a1[0], hy + a1[1], a=thr)
-            add((D(hx, 0, thr) + 0.31, 1, A[0], A[1], Bp[0], Bp[1], 0.5 * S, 0.22 * S, pal['stripe'], 1.0))
+            A, Bp = P(off(pelvis, fr0, *a0)), P(off(pelvis, fr0, *a1))
+            add((pelvis[2] + 0.31, 1, A[0], A[1], Bp[0], Bp[1], 0.5 * S, 0.22 * S, pal['stripe'], 1.0))
 
-        # legs: authored base + gait clock + behaviour offsets, solved with IK
+        # legs: paw targets (authored base + gait clock + behaviour offsets) solved per leg plane
         for i in range(4):
             lat = LEG_LAT[i]
-            if i < 2:
-                af, au = sx + 0.5, sy - 1.6
-                bf, bu = p['ffx'] - (0.5 if i == 1 else 0), p['ffy']
-                l1, l2, r1a, r1b = 3.8, 3.6, 1.5, 1.15
-            else:
-                af, au = hx + 0.5, hy - 1.4
-                bf, bu = p['hfx'] + (0.6 if i == 3 else 0), p['hfy']
-                l1, l2, r1a, r1b = 3.4, 5.0, 2.2, 1.25
-            ff = bf + self.gx[i] + self.pex[i]
-            fu = max(1.0, bu + self.gy[i] + self.pey[i] + self.lift[i])
-            jf, ju, ff, fu = ik(af, au, ff, fu, l1, l2)
-            ju = max(ju, 0.9)
-            a = thf if i < 2 else thr
+            front = i < 2
+            a = thf if front else thr
+            pf = (p['ffx'] - (0.5 if i == 1 else 0) if front else p['hfx'] + (0.6 if i == 3 else 0)) \
+                + self.gx[i] + self.pex[i]
+            pu = max(1.0, (p['ffy'] if front else p['hfy']) + self.gy[i] + self.pey[i] + self.lift[i])
             near = lat * math.cos(a) >= 0
             col = pal['fur'] if near else pal['far']
             paw = pal['paw'] if near else pal['paw_f']
-            dep = D(af, lat, a)
-            A, J, F, T = (W(af, au, lat, a), W(jf, ju, lat, a, af), W(ff, fu, lat, a, af),
-                          W(ff + 0.8, fu - 0.05, lat, a, af))
-            add((dep, 1, A[0], A[1], J[0], J[1], r1a * S, r1b * S, col, 1.0))
-            add((dep + 0.001, 1, J[0], J[1], F[0], F[1], 1.05 * S, 1.0 * S, col, 1.0))
-            add((dep + 0.002, 1, F[0], F[1], T[0], T[1], 1.08 * S, 1.0 * S, paw, 1.0))
+            if front:
+                # shoulder blade pivots on the ribcage and partly follows the leg's swing
+                mid = off(shoulder, frN, -0.4, 0.6)
+                mf, mu = plane(mid, a), mid[1]
+                sw = lerp(-1.2, math.atan2(pu - mu, pf - mf), 0.4)
+                tf, tu = mf - 2.0 * math.cos(sw), mu - 2.0 * math.sin(sw)
+                jf, ju = mf + 2.0 * math.cos(sw), mu + 2.0 * math.sin(sw)
+                ef, eu, pf, pu = ik(jf, ju, pf, pu, 3.6, 4.2, -1)
+                bones = (((tf, tu), (jf, ju), 1.7, 1.4), ((jf, ju), (ef, max(eu, 0.9)), 1.45, 1.15),
+                         ((ef, max(eu, 0.9)), (pf, pu), 1.05, 0.95))
+            else:
+                # digitigrade hind leg: femur, tibia (knee forward), long metatarsus to the toes
+                hip = off(pelvis, fr0, 0.4, -0.9)
+                hf, hu = plane(hip, a), hip[1]
+                am = lerp(0.25, 1.15, clamp((hu - 2.2) / 5, 0, 1))
+                kf, ku = pf - 2.9 * math.cos(am), max(0.9, pu + 2.9 * math.sin(am))
+                nf, nu, kf, ku = ik(hf, hu, kf, ku, 3.0, 3.4, 1)
+                bones = (((hf, hu), (nf, max(nu, 0.9)), 2.2, 1.5), ((nf, max(nu, 0.9)), (kf, ku), 1.3, 1.05),
+                         ((kf, ku), (pf, pu), 1.05, 0.95))
+            for k, ((f0, u0), (f1, u1), ra, rr) in enumerate(bones):
+                A, Bp = at((0, 0, 0), a, f0, u0, lat), at((0, 0, 0), a, f1, u1, lat)
+                add((A[2] + k * 0.001, 1, *P(A), *P(Bp), ra * S, rr * S, col, 1.0))
+            A, Bp = at((0, 0, 0), a, pf, pu, lat), at((0, 0, 0), a, pf + 0.8, pu - 0.05, lat)
+            add((A[2] + 0.003, 1, *P(A), *P(Bp), 1.08 * S, 1.0 * S, paw, 1.0))
 
-        # tail
-        tf, tu = hx - vx * hipR * 0.75, hy - vy * hipR * 0.75 + 0.6
-        pts = [(tf, tu)]
-        f_, u_ = tf, tu
-        for a in self.ta:
-            f_ += TAIL_SEG * math.cos(a)
-            u_ = max(0.8, u_ + TAIL_SEG * math.sin(a))
+        # tail: chain of angle springs in the hip plane
+        base = off(pelvis, fr0, -hipR * 0.75, 0.6)
+        f_, u_ = plane(base, thr), base[1]
+        lat_ = -base[0] * math.sin(thr) + base[2] * math.cos(thr)
+        pts = [(f_, u_)]
+        for ang_ in self.ta:
+            f_ += TAIL_SEG * math.cos(ang_)
+            u_ = max(0.8, u_ + TAIL_SEG * math.sin(ang_))
             pts.append((f_, u_))
-        tz = p['tailZ'] + D(hx, 0, thr) * 0.5
+        tz = p['tailZ'] + pelvis[2] * 0.5
         for i in range(TAIL_N):
             r0 = lerp(1.2, 0.85, i / TAIL_N) * (1 + 1.3 * puff)
             r1 = lerp(1.2, 0.85, (i + 1) / TAIL_N) * (1 + 1.3 * puff)
             col = pal['tip'] if i == TAIL_N - 1 else pal['ring'] if i % 2 == 1 else pal['tail']
-            A, Bp = W(*pts[i], a=thr, anchor=tf), W(*pts[i + 1], a=thr, anchor=tf)
-            add((tz + i * 1e-4, 1, A[0], A[1], Bp[0], Bp[1], r0 * S, r1 * S, col, 1.0))
+            A, Bp = at((0, 0, 0), thr, *pts[i], lat_), at((0, 0, 0), thr, *pts[i + 1], lat_)
+            add((tz + i * 1e-4, 1, *P(A), *P(Bp), r0 * S, r1 * S, col, 1.0))
 
-        # head: its own yaw (look at you / out of the window / behind) and tilt
+        # neck + head: the head has its own yaw (you / the window / behind) and tilt
         yaw = p['hyaw']
-        HXl, HUl = sx + p['hdx'] * math.cos(yaw * PI / 2), sy + p['hdy']
+        head = at(shoulder, thf, p['hdx'] * math.cos(yaw * PI / 2), p['hdy'])
         R = 3.9 * (1 + 0.1 * puff)
-        HX, HY = W(HXl, HUl, a=thf, anchor=sx)
+        nb = off(shoulder, frN, 0.6, 1.2)
+        add((min(nb[2], head[2]) + 0.4, 1, *P(nb), *P(head), 2.7 * rb * S, 2.3 * rb * S, pal['fur'], 1.0))
+        HX, HY = P(head)
         thh = self.thh + (1 if math.cos(self.thh) >= 0 else -1) * yaw * PI / 2
         ch, sh = math.cos(thh), math.sin(thh)
         ct, st = math.cos(p['htilt']), math.sin(p['htilt'])
-        hd = D(HXl, 0, thf, sx) + 0.9
+        hd = head[2] + 0.9
 
         def HP(f, u, l=0.0):
             f2, u2 = f * ct - u * st, f * st + u * ct
@@ -1437,23 +1472,115 @@ class Cat:
         yield from self.until(lambda: self.v < 0.1, 1.0)
         self.v = 0.0
 
-    def go(self, tx, level=None, **kw):
+    def plan_hop(self, target, tx):
+        """One hop toward platform `target`: ('jump' | 'wall', launch x, landing x, level, wall x) or None."""
         w, S = self.sim.world, self.S
-        level = level or self.level
-        if level != self.level:
-            if self.level == 'floor':
-                lx = clamp(tx, *w.bounds('sill'))
-                side = -1 if self.x < lx else 1
-                jx = clamp(lx + side * 11 * S, *w.bounds('floor'))
-                yield from self.walk_to(jx, **kw)
-                yield from self.jump_to(lx, 'sill', h=4)
+        rise = (w.ground(self.level, 0) - w.ground(target, 0)) / S
+        lo_a, hi_a = w.bounds(self.level)
+        lo_b, hi_b = w.bounds(target)
+        lx = clamp(tx, lo_b, hi_b)
+        if rise <= 24:  # a plain jump, up to about a body length
+            best = None
+            for side in (-1, 1):
+                jx = clamp(lx + side * 11 * S, lo_a, hi_a)
+                if abs(jx - lx) <= 26 * S and (best is None or abs(jx - self.x) < abs(best[1] - self.x)):
+                    best = ('jump', jx, lx, target, None)
+            if best:
+                return best
+        if 0 < rise <= 46:  # too high: run at a wall next to the target, kick off it and twist up
+            x0, x1, _ = w.platforms[target]
+            for wall, side in ((w.walls[1], 1), (w.walls[0], -1)):
+                if (x1 >= wall - 4 * S) if side > 0 else (x0 <= wall + 4 * S):
+                    jx = wall - side * 17 * S
+                    if lo_a - 1 <= jx <= hi_a + 1:
+                        return ('wall', jx, clamp(wall - side * 14 * S, lo_b, hi_b), target, wall)
+        return None
+
+    def go(self, tx, level=None, **kw):
+        """Walk to tx on `level`, hopping between platforms (via the floor if needed)."""
+        w = self.sim.world
+        level = level if level in w.platforms else self.level
+        for _ in range(3):
+            if level == self.level:
+                break
+            hop = self.plan_hop(level, tx)
+            if hop is None:
+                if self.level == 'floor':
+                    return
+                hop = self.plan_hop('floor', self.x)
+                if hop is None:
+                    return
+            kind, jx, lx, lvl, wall = hop
+            yield from self.walk_to(jx, **kw)
+            if kind == 'jump':
+                yield from self.jump_to(lx, lvl, h=4 if w.ground(lvl, 0) < self.y else 3)
             else:
-                b0, b1 = w.bounds('sill')
-                edge = b1 if tx > (b0 + b1) / 2 else b0
-                yield from self.walk_to(edge, **kw)
-                land = clamp(edge + (1 if edge == b1 else -1) * 13 * S, *w.bounds('floor'))
-                yield from self.jump_to(land, 'floor', h=3)
-        yield from self.walk_to(tx, **kw)
+                yield from self.wall_kick(wall, lvl, lx)
+        if level == self.level:
+            yield from self.walk_to(tx, **kw)
+
+    def wall_kick(self, wall, level, land_x, running=False):
+        """Leap at a wall, plant all four paws on it, then push off and twist round in the air."""
+        S, rng, w = self.S, self.rng, self.sim.world
+        side = 1 if wall > self.x else -1
+        if not running:
+            yield from self.stand_up(quick=True)
+            yield from self.face(side)
+            self.set_pose('crouch', tailA=0.2)
+            self.look = (wall, self.y - 18 * S)
+            yield from self.wait(rng.uniform(0.25, 0.45))
+            self.look = None
+        self.busy, self.airborne = True, True
+        self.vt = self.v = 0.0
+        self.tgt['stride'] = 0.0
+        y0, x0 = self.y, self.x
+        y1 = w.ground(level, land_x)
+        climb = clamp((y0 - y1) * 0.55, 11 * S, 26 * S) if y1 < y0 - 4 * S else 11 * S
+        cx, cy = wall - side * 5.4 * S, y0 - climb
+        # 1. leap at the wall, body pitching up as it gets there
+        self.set_pose('air')
+        self.snap = 1.8
+        dur = 0.28 + 0.006 * abs(cx - x0) / S + 0.006 * climb / S
+        t0 = self.t
+        while self.t < t0 + dur:
+            u = (self.t - t0) / dur
+            self.x = lerp(x0, cx, u)
+            self.y = lerp(y0, cy, 1 - (1 - u) ** 2) - 2.5 * S * math.sin(PI * u)
+            if u > 0.5:
+                self.set_pose('wall')
+            yield
+        # 2. paws on the wall: a short compression
+        self.x, self.y = cx, cy
+        self.doing = self.doing if self.doing.startswith('ZOOM') else 'wall-kicking'
+        self.set_pose('wall', hy=3.4, sy=15.4)
+        self.sim.dust(wall - side * 0.5 * S, cy - 6 * S, 4)
+        yield from self.wait(0.13)
+        # 3. push off with a twist: heading flips while the body unfolds into the jump
+        self.aim(-side)
+        self.th_k = 16.0
+        self.set_pose('air')
+        base_sy, base_hy = self.tgt['sy'], self.tgt['hy']
+        apex = min(cy, y1) - 5 * S
+        hh = (cy + y1) / 2 - apex
+        dur = 0.34 + 0.009 * abs(land_x - cx) / S + 0.006 * abs(cy - y1) / S
+        t0 = self.t
+        while self.t < t0 + dur:
+            u = (self.t - t0) / dur
+            self.x = lerp(cx, land_x, u)
+            self.y = lerp(cy, y1, u) - 4 * hh * u * (1 - u)
+            pitch = clamp(1.0 - 2.2 * u, -0.6, 0.8)
+            self.tgt['sy'], self.tgt['hy'] = base_sy + pitch * 4, base_hy - pitch * 4
+            if u > 0.6:
+                self.tgt.update(ffx=8.0, ffy=1.5, hfx=-7.0, hfy=3.0)
+            yield
+        self.x, self.y, self.level, self.airborne = land_x, y1, level, False
+        self.sim.dust(self.x, y1, 6)
+        self.set_pose('crouch')
+        self.snap = 1.3
+        yield from self.wait(0.18)
+        self.busy, self.snap, self.th_k = False, 1.0, TURN_K
+        self.set_pose('stand')
+        yield from self.wait(0.2)
 
     def jump_to(self, tx, level, h=5.0, anticip=(0.25, 0.55), air='air', land='crouch', flip=False):
         S, rng = self.S, self.rng
@@ -1613,8 +1740,8 @@ class Cat:
         rng, w, S = self.rng, self.sim.world, self.S
         self.doing = 'wandering'
         lvl = self.level
-        if rng.random() < 0.25:
-            lvl = 'sill' if lvl == 'floor' else 'floor'
+        if rng.random() < 0.3:
+            lvl = rng.choice(sorted(w.platforms))
         lo, hi = w.bounds(lvl)
         tx = rng.uniform(lo, hi)
         if lvl == self.level and abs(tx - self.x) < 15 * S:
@@ -1631,8 +1758,10 @@ class Cat:
         rng, w, S = self.rng, self.sim.world, self.S
         self.doing = 'looking for a spot'
         r = rng.random()
-        if self.level == 'sill' and r < 0.5:
-            spot, lvl, pose = clamp(self.x, *w.bounds('sill')), 'sill', 'loaf'
+        if self.level != 'floor' and r < 0.5:
+            spot, lvl, pose = clamp(self.x, *w.bounds(self.level)), self.level, 'loaf'
+        elif 'shelf' in w.platforms and r < 0.7:
+            spot, lvl, pose = lerp(*w.bounds('shelf'), rng.uniform(0.3, 0.7)), 'shelf', 'curl'
         else:
             spot, lvl, pose = w.bed_x + rng.uniform(-2, 2) * S, 'floor', 'curl'
         yield from self.go(spot, lvl)
@@ -1732,6 +1861,8 @@ class Cat:
         lo, hi = w.bounds('sill')
         tx = clamp(lerp(w.wx0, w.wx1, rng.uniform(0.3, 0.6)), lo, hi)
         yield from self.go(tx, 'sill')
+        if self.level != 'sill':
+            return
         self.set_pose('sit')
         yield from self.wait(0.6)
         bird = w.bird
@@ -1771,6 +1902,35 @@ class Cat:
                 yield from self.sleep_here('loaf')
                 yield from self.b_wake()
 
+    def b_perch(self):
+        """Go up high (on top of the fastfetch box) and survey the room."""
+        rng, w = self.rng, self.sim.world
+        if 'shelf' not in w.platforms:
+            yield from self.b_loaf()
+            return
+        self.doing = 'climbing up'
+        yield from self.go(lerp(*w.bounds('shelf'), rng.uniform(0.25, 0.75)), 'shelf')
+        if self.level != 'shelf':
+            return
+        self.doing = 'surveying the room'
+        self.set_pose('sit')
+        yield from self.wait(0.6)
+        end = self.t + rng.uniform(20, 60)
+        while self.t < end:
+            r = rng.random()
+            if r < 0.15:
+                yield from self.slow_blink()
+            elif r < 0.3 and self.energy < 0.6:
+                self.doing = 'loafing up high'
+                self.set_pose('loaf')
+                yield from self.wait(rng.uniform(8, 20))
+                self.set_pose('sit')
+                self.doing = 'surveying the room'
+            else:  # look down at the room
+                self.look = (rng.uniform(0, w.W), w.gy - rng.uniform(0, 10) * self.S)
+                yield from self.wait(rng.uniform(1.0, 3.5))
+        self.look = None
+
     def b_knock(self):
         rng, sim, S = self.rng, self.sim, self.S
         mug = sim.mug
@@ -1780,7 +1940,7 @@ class Cat:
         lo, hi = sim.world.bounds('sill')
         yield from self.go(clamp(mug.x - 8.8 * S, lo, hi), 'sill')
         yield from self.face(1)
-        if mug.state != 'sill':
+        if mug.state != 'sill' or self.level != 'sill':
             return
         self.set_pose('sit')
         yield from self.wait(0.6)
@@ -1915,7 +2075,8 @@ class Cat:
                 self.vt = speed * (1 + 0.1 * noise(self.t * 2))
                 yield
             if reaction == 'kick':
-                yield from self.jump_to(wall + d * 2 * S, 'floor', h=11, anticip=(0.0, 0.02), flip=True)
+                screen_wall = w.walls[1] if d > 0 else w.walls[0]
+                yield from self.wall_kick(screen_wall, 'floor', screen_wall - d * 24 * S, running=True)
             else:
                 self.doing = 'ZOOMIES (skidding)'
                 self.set_pose('skid')
@@ -2256,7 +2417,7 @@ class Sim:
         self.W, self.H = W, H
         self.S = clamp(min(H / 64, W / 120), 0.55, 4.0)
         self.layout_info()
-        self.world = World(W, H, self.S, self.rng, self.ascii, self.info_w + 2 if self.info_w else 0)
+        self.world = World(W, H, self.S, self.rng, self.ascii, self.info_box)
         self.world.update(0, self.t, self.hour())
         self.cv = Canvas(W, H)
         if self.cat is None:
@@ -2355,8 +2516,10 @@ class Sim:
             w = text_w + 4 + (12 if logo else 0)
             if cols - 2 - w > sky_right + 2 and rows >= 16:
                 self.info_w, self.info_logo, self.info_text_w = w, logo, text_w
+                n = min(2 + len(self.info.lines()) + 5 + (0 if self.ascii else 3), max(3, rows - 5))
+                self.info_box = (cols - 1 - w, 1, cols - 2, n + 2) if self.panel else None
                 return
-        self.info_w, self.info_logo, self.info_text_w = 0, False, 0
+        self.info_w, self.info_logo, self.info_text_w, self.info_box = 0, False, 0, None
 
     def overlay(self):
         """Text over the pixels: {row: {col: (ch, fg_sgr, bg_sgr, front)}}. Text that is not 'front'
@@ -2404,9 +2567,8 @@ class Sim:
             bottom = 1 + 5 * max(1, w.ck // 2) if asc else math.ceil((2 + 5 * w.ck) / 2)
             put(int(w.clock_x - len(d) / 2), bottom + 1, d, faint)
         # fastfetch pane
-        if self.panel and self.info_w:
-            c1, r0 = cols - 2, 1
-            c0 = c1 - self.info_w + 1
+        if self.info_box:
+            c0, r0, c1, r1 = self.info_box
             tw = self.info_text_w
             mood = cat.mood()
             face = '-.-' if cat.asleep else 'O.O' if cat.gen_name in ('hunt', 'zoomies', 'startle') \
@@ -2424,8 +2586,7 @@ class Sim:
                 body.append(((k, accent), (': ' + v[:tw - len(k) - 2], txt)))
             if not asc:
                 body += [(), 'palette', 'palette2']
-            body = body[:max(3, rows - 5)]
-            r1 = r0 + len(body) + 1
+            body = body[:r1 - r0 - 1]
             box(c0, r0, c1, r1, 'fastfetch')
             x0 = c0 + 2
             if self.info_logo:
@@ -2607,6 +2768,7 @@ def parse_input(data, sim):
             return False
         if ch == 'i':
             sim.panel = not sim.panel
+            sim.resize(sim.W, sim.H)
         elif ch == 'l':
             if sim.laser.mode == 'ai':
                 sim.laser.stop(sim.t)
@@ -2717,6 +2879,7 @@ def soak(args):
             c = sim.cat
             lo, hi = sim.world.bounds(c.level)
             assert all(math.isfinite(v) for v in (c.x, c.y, c.th, c.v)), 'non-finite state'
+            assert c.level in sim.world.platforms, ('on a platform that does not exist', c.level)
             assert lo - 4 * sim.S <= c.x <= hi + 4 * sim.S or c.airborne, ('out of bounds', c.x, lo, hi, c.gen_name)
             assert 0 <= sim.yarn.x <= sim.W
             hp = c.head_pos()

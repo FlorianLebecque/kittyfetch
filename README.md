@@ -68,15 +68,15 @@ the status bar and the fastfetch pane, whose accent colour follows the coat.
 - **Behaviours that chain:** waking up (blink, yawn, stretch, groom),
   napping (kneads, turns round once, curls up, breathes, dreams with twitching
   paws), wandering and sniffing, loafing, slow-blinking at you, grooming paws,
-  face and flank, bird watching from the ledge (chattering, pawing at the
+  face and flank, surveying the room from on top of the fastfetch box, bird watching from the ledge (chattering, pawing at the
   glass), batting and stalking the yarn, laser hunting (stalk with frozen mid-step
   paws, butt wiggle, pounce, peeking under the paw), zoomies with wall skids and
-  mid-air wall kicks, being startled, and knocking the mug off the ledge.
+  wall kicks (paws on the wall, push off, twist), being startled, and knocking the mug off the ledge.
 - **Cat logic.** It never walks backwards: it turns, leading with the head,
   the spine bending as the hips follow. It pauses mid-walk, gets bored of the
   laser and gives up, and grooms after the zoomies as if nothing happened.
-- **A small world.** The status bar is the floor and the bottom border of the
-  "outside" pane is a ledge to jump on. The sky follows your clock (sun, moon,
+- **A small world.** The status bar is the floor, and the bottom borders of the
+  "outside" pane and of the fastfetch box are ledges to jump on. The sky follows your clock (sun, moon,
   stars, lit windows across the street) and the weather changes. Birds land on
   the ledge outside. The mug gets tidied back onto the ledge while the cat sleeps.
 - **fastfetch pane:** OS, host, kernel, uptime, packages (dpkg, pacman, flatpak,
@@ -99,17 +99,33 @@ is diffed against the previous one and sent as a single write wrapped in
 synchronized-output escapes, so there's no flicker and very little output
 while the cat sleeps.
 
-**The rig.** The cat is a side-view procedural rig, not sprites. A pose is
-about 25 numbers (hip and shoulder positions, spine arch, head offset, tilt
-and yaw, ears, eyes, tail curl, ...), each driven toward its target by a
-critically damped spring with its own stiffness, so ears and tail lag the body
-and everything eases in and out. The body is a spine curve swept with circles;
-legs are 2-bone IK whose feet come from a **gait clock** that advances with
-distance travelled, so feet never skate. The walk is a lateral-sequence gait
-that blends into a rotary gallop. The tail is a chain of angle springs, stiffer at the
-root, so the tip trails. Turning is choreographed (head, then shoulders, then
-hips), and the spine is laid out by integrating the heading along its length,
-which bends the body into a C when the cat turns.
+**The rig.** The cat is a procedural 3D skeleton seen from the side, not
+sprites. A pose is about 25 numbers (where the hips and shoulders sit, head
+offset, tilt and yaw, ears, eyes, tail curl, paw rests, ...), each driven
+toward its target by a critically damped spring with its own stiffness, so
+ears and tail lag the body and everything eases in and out. From those numbers
+the skeleton is rebuilt every frame:
+
+- **Spine:** seven vertebrae with a fixed total length. Poses can only bend the
+  back, never stretch it: bring the hips and shoulders together and it domes
+  (loaf) or curls (sit), and the gallop's stretch-and-gather cycle bunches and
+  extends it.
+- **Front legs:** a shoulder blade that pivots on the ribcage and follows the
+  leg's swing, then upper arm and forearm (2-bone IK, elbow back).
+- **Hind legs:** digitigrade: thigh and shin (knee forward), then a long ankle
+  bone that lies flat when the cat sits.
+- **Feet** come from a **gait clock** that advances with distance travelled, so
+  they never skate; a lateral-sequence walk blends into a rotary gallop.
+- **Tail:** a chain of angle springs, stiffer at the root, so the tip trails.
+- **Turning** is choreographed (head, then shoulders, then hips), with the
+  spine's heading blended along its length so the body curls round.
+
+**Platforms and walls.** The status bar, the bottom border of the "outside"
+pane and the bottom border of the fastfetch box are all floors. A small
+planner chains jumps between them (via the floor if needed). When a ledge is
+too high for a plain jump, the cat runs at the screen edge, plants its paws on
+the wall and kicks off, twisting round in the air to land on it. The zoomies
+use the same wall kick.
 
 **Behaviours** are Python generators (`b_nap`, `b_hunt`, `b_zoomies`, ...).
 Each `yield` is a frame, so a behaviour reads like a script with pauses in it
