@@ -172,3 +172,7 @@ the program uses a few percent of one core.
   cat walks in front of it). Press `i` to hide it.
 - There's no 256-colour fallback: it's truecolor or `--ascii`.
 - The wall is the bare screen edge, so there's nothing visible for the paws to touch.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
