@@ -23,7 +23,13 @@ One Python file, standard library only.
 python3 kittyfetch.py
 ```
 
-To have it as a command, install it once and then just type `kittyfetch`:
+Or install it as a command in one line, then just type `kittyfetch`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FlorianLebecque/kittyfetch/main/kittyfetch.py | python3 - --install
+```
+
+From a clone it works the same way:
 
 ```bash
 git clone https://github.com/FlorianLebecque/kittyfetch.git

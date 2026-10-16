@@ -3066,8 +3066,12 @@ def shots(args):
             k += 1
 
 
+RAW_URL = 'https://raw.githubusercontent.com/FlorianLebecque/kittyfetch/main/kittyfetch.py'
+
+
 def install(remove=False):
-    """Copy this script to ~/.local/bin/kittyfetch (or $XDG_BIN_HOME) so it runs as a command."""
+    """Copy this script to ~/.local/bin/kittyfetch (or $XDG_BIN_HOME) so it runs as a command.
+    When piped in (curl ... | python3 - --install) there is no file to copy, so fetch it instead."""
     import shutil
     bindir = os.environ.get('XDG_BIN_HOME') or os.path.join(os.path.expanduser('~'), '.local', 'bin')
     dest = os.path.join(bindir, 'kittyfetch')
@@ -3078,12 +3082,17 @@ def install(remove=False):
         else:
             print('nothing to remove at', dest)
         return
-    src = os.path.realpath(__file__)
-    if os.path.realpath(dest) == src:
+    src = os.path.realpath(__file__) if os.path.isfile(__file__) else None
+    if src and os.path.realpath(dest) == src:
         print('already installed at', dest)
         return
     os.makedirs(bindir, exist_ok=True)
-    shutil.copyfile(src, dest)
+    if src:
+        shutil.copyfile(src, dest)
+    else:
+        import urllib.request
+        with urllib.request.urlopen(RAW_URL, timeout=30) as r, open(dest, 'wb') as f:
+            f.write(r.read())
     os.chmod(dest, 0o755)
     print('installed', dest)
     path = [os.path.realpath(p) for p in os.environ.get('PATH', '').split(os.pathsep) if p]
