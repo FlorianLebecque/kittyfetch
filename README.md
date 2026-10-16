@@ -51,6 +51,7 @@ python3 kittyfetch.py --timelapse 120    # watch a day go by in 12 minutes
 |---|---|
 | `--coat NAME` | `ginger`, `black`, `grey`, `tuxedo`, `siamese`, `tortie`, `white` (default: random) |
 | `--ascii` | plain ASCII rendering |
+| `--bg '#rrggbb'` | your terminal's background colour, if it doesn't report it (most do) |
 | `--no-mouse` | don't capture the mouse (keeps text selection working) |
 | `--fps N` | frame rate while the cat is awake (default 20; it drops to 10 while asleep) |
 | `--hour H` | pretend it is this hour, for the sky outside |
@@ -92,11 +93,17 @@ the status bar and the fastfetch pane, whose accent colour follows the coat.
 |---|---|
 | ![asleep at night](docs/night.png) | ![ascii mode](docs/ascii.png) |
 
+| Light terminal theme (detected automatically) |
+|---|
+| ![light theme](docs/light.png) |
+
 ## How it works
 
 **Rendering.** Every terminal cell is two vertical pixels drawn with `▀`/`▄`
 and truecolor foreground/background, so the cat is smooth, antialiased pixel
-art. Pixels left at the background colour are emitted as the terminal's
+art. At startup it asks the terminal for its background colour (OSC 11), so
+edges blend into your theme and text switches to a light-theme palette when
+needed. Pixels left at the background colour are emitted as the terminal's
 default background, so the scene sits on your own theme. Text panes are drawn
 *behind* the cat: a cell shows text only where no pixel is drawn. Each frame
 is diffed against the previous one and sent as a single write wrapped in
@@ -161,8 +168,6 @@ the program uses a few percent of one core.
 
 ## Known rough edges
 
-- Edges are antialiased against an assumed dark background (`#0c0d12`); on a
-  light terminal theme the cat gets a faint dark fringe.
 - Under about 100 columns the fastfetch pane takes up a lot of the screen (the
   cat walks in front of it). Press `i` to hide it.
 - There's no 256-colour fallback: it's truecolor or `--ascii`.

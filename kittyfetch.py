@@ -21,6 +21,7 @@ import argparse
 import math
 import os
 import random
+import re
 import select
 import struct
 import sys
@@ -238,8 +239,39 @@ class Canvas:
 
 
 # ------------------------------------------------------------------ world
-BG = (12, 13, 18)   # assumed terminal background: pixels of exactly this colour are left transparent
+# The terminal's background colour (asked for at startup, dark by default). Pixels of exactly this
+# colour are left transparent, and antialiased edges blend toward it. THEME holds the text colours.
+THEMES = {
+    'dark': dict(txt=(214, 218, 230), faint=(120, 126, 150), dim=(88, 96, 124), clock=(70, 80, 108),
+                 dust=(120, 124, 140)),
+    'light': dict(txt=(36, 40, 54), faint=(92, 98, 118), dim=(140, 146, 166), clock=(88, 98, 128),
+                  dust=(150, 150, 160)),
+}
+BG = (12, 13, 18)
 BG_PK = pack(BG)
+THEME = THEMES['dark']
+
+
+def set_background(rgb):
+    global BG, BG_PK, THEME
+    BG, BG_PK = tuple(rgb), pack(rgb)
+    THEME = THEMES['light' if lum(BG_PK) > 128 else 'dark']
+
+
+def readable(col):
+    """Darken (light theme) or lighten (dark theme) a colour until it stands out from the background."""
+    light = lum(BG_PK) > 128
+    for _ in range(10):
+        if (lum(pack(col)) < lum(BG_PK) - 90) if light else (lum(pack(col)) > lum(BG_PK) + 90):
+            break
+        col = mulc(col, 0.82) if light else mixc(col, (255, 255, 255), 0.25)
+    return col
+
+
+def sgr_fg(c):
+    return '38;2;%d;%d;%d' % tuple(_c8(v) for v in c)
+
+
 FONT = {'0': ('111', '101', '101', '101', '111'), '1': ('010', '110', '010', '010', '111'),
         '2': ('111', '001', '111', '100', '111'), '3': ('111', '001', '111', '001', '111'),
         '4': ('101', '101', '111', '001', '001'), '5': ('111', '100', '111', '001', '111'),
@@ -498,7 +530,7 @@ class World:
             k = self.ck
             txt = '%02d:%02d' % (lt.tm_hour, lt.tm_min)
             x = self.clock_x - 17 * k / 2
-            col = (120, 120, 120) if self.ascii else (70, 80, 108)
+            col = (120, 120, 120) if self.ascii else THEME['clock']
             for ch in txt:
                 for gy_, row in enumerate(FONT[ch]):
                     for gx_, bit in enumerate(row):
@@ -2568,7 +2600,7 @@ class Sim:
             mug.draw(cv, w.L, self.ascii)
         self.yarn.draw(cv, (1.0, 1.0, 1.0), self.ascii)
         self.laser.draw(cv, self.ascii)
-        dc = (150, 150, 150) if self.ascii else (120, 124, 140)
+        dc = (150, 150, 150) if self.ascii else THEME['dust']
         for x, y, _, _, age, life in self.parts:
             cv.circle(x, y, 0.6 * self.S, dc, 0, 0.6 * (1 - age / life))
         return cv
@@ -2598,8 +2630,8 @@ class Sim:
         cols, rows = self.W, self.H // 2
         asc, w, cat = self.ascii, self.world, self.cat
         coat = coat_palette(cat.coat)
-        accent = 'orange' if asc else '38;2;%d;%d;%d' % coat['accent']
-        dim, txt, faint = ('38;2;88;96;124', '38;2;214;218;230', '38;2;120;126;150')
+        accent = 'orange' if asc else sgr_fg(readable(coat['accent']))
+        dim, txt, faint = sgr_fg(THEME['dim']), sgr_fg(THEME['txt']), sgr_fg(THEME['faint'])
 
         def put(cx, cy, s, fg=txt, bg='49', front=False):
             if 0 <= cy < rows:
@@ -2680,14 +2712,15 @@ class Sim:
         # status bar: the floor
         y = rows - 1
         name = COATS[cat.coat]['name'].lower()
+        bar_txt = sgr_fg(THEMES['dark']['txt'])
         left = [(' %s ' % name, '38;2;20;20;28', '48;2;%d;%d;%d' % coat['accent']),
-                (' %s ' % cat.mood(), txt, '48;2;58;62;84'), (' %s ' % cat.doing, txt, '48;2;40;43;58')]
+                (' %s ' % cat.mood(), bar_txt, '48;2;58;62;84'), (' %s ' % cat.doing, bar_txt, '48;2;40;43;58')]
         info = self.info
-        right = [(' load %.2f ' % info.load[0], txt, '48;2;40;43;58'),
-                 (' mem %d%% ' % info.mem_pct, txt, '48;2;58;62;84'),
-                 (time.strftime(' %a %d %b '), txt, '48;2;40;43;58'),
+        right = [(' load %.2f ' % info.load[0], bar_txt, '48;2;40;43;58'),
+                 (' mem %d%% ' % info.mem_pct, bar_txt, '48;2;58;62;84'),
+                 (time.strftime(' %a %d %b '), bar_txt, '48;2;40;43;58'),
                  (time.strftime(' %H:%M '), '38;2;20;20;28', '48;2;%d;%d;%d' % coat['accent'])]
-        put(0, y, ' ' * cols, txt, '48;2;28;30;40', True)
+        put(0, y, ' ' * cols, bar_txt, '48;2;28;30;40', True)
         x = 0
         for seg, fg, bg in left:
             put(x, y, seg, fg, bg, True)
@@ -2721,9 +2754,10 @@ class Screen:
         self.prev = self.prevpx = None
         self.prev_ov = {}
 
-    def encode(self, px, W, rows, ov, ascii_mode, bgp=BG_PK):
+    def encode(self, px, W, rows, ov, ascii_mode, bgp=None):
         """Diff against the last frame and emit one string. Pixels equal to bgp stay
         transparent (terminal default background)."""
+        bgp = BG_PK if bgp is None else bgp
         n = W * rows
         if self.prev is None or len(self.prev) != n:
             self.prev = [None] * n
@@ -2864,6 +2898,29 @@ def sky_clock(args):
     return lambda t: h0 + t * args.timelapse / 3600
 
 
+def query_background(fd, timeout=0.3):
+    """Ask the terminal for its background colour (OSC 11). Returns (r, g, b) or None."""
+    sys.stdout.write('\x1b]11;?\x1b\\')
+    sys.stdout.flush()
+    buf, end = '', time.monotonic() + timeout
+    while time.monotonic() < end:
+        r, _, _ = select.select([fd], [], [], max(0.0, end - time.monotonic()))
+        if not r:
+            break
+        buf += os.read(fd, 1024).decode('latin-1')
+        m = re.search(r'\]11;rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)', buf)
+        if m:
+            return tuple(int(h, 16) * 255 // (16 ** len(h) - 1) for h in m.groups())
+    return None
+
+
+def parse_color(text):
+    m = re.fullmatch(r'#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})', text.strip())
+    if not m:
+        raise argparse.ArgumentTypeError('expected a colour like #fdf6e3')
+    return tuple(int(h, 16) for h in m.groups())
+
+
 def run(args):
     import termios
     import tty
@@ -2875,6 +2932,9 @@ def run(args):
     hour_fn = sky_clock(args)
     try:
         tty.setcbreak(fd)
+        bg = args.bg or query_background(fd)
+        if bg:
+            set_background(bg)
         out.write(enter)
         out.flush()
         cols, lines = os.get_terminal_size()
@@ -2998,6 +3058,8 @@ def main():
     ap.add_argument('--ascii', action='store_true', help='plain ASCII mode, no colour')
     ap.add_argument('--coat', choices=sorted(COATS), default=None, help='pick the cat (default: random)')
     ap.add_argument('--fps', type=float, default=20, help='frame rate while awake (default 20)')
+    ap.add_argument('--bg', type=parse_color, default=None,
+                    help="terminal background, e.g. '#fdf6e3' (default: ask the terminal)")
     ap.add_argument('--no-mouse', dest='mouse', action='store_false', help="don't capture the mouse")
     ap.add_argument('--hour', type=float, default=None, help='pretend it is this hour (0-24)')
     ap.add_argument('--timelapse', type=float, default=1.0, help='speed up the day/night cycle')
