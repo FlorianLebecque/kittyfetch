@@ -9,9 +9,13 @@ One Python file, standard library only.
 
 ![kittyfetch on a 150-column terminal](docs/hero.png)
 
-| Laser hunt (press `l`, or move the mouse) | Night zoomies |
+| Laser hunt (press `l`, or move the mouse) | Night zoomies, with a wall kick |
 |---|---|
 | ![hunting the laser dot](docs/hunt.gif) | ![zoomies](docs/zoomies.gif) |
+
+| Wall-kicking up onto the fastfetch box |
+|---|
+| ![climbing onto the fastfetch box](docs/climb.gif) |
 
 ## Run it
 
@@ -114,8 +118,17 @@ the skeleton is rebuilt every frame:
   leg's swing, then upper arm and forearm (2-bone IK, elbow back).
 - **Hind legs:** digitigrade: thigh and shin (knee forward), then a long ankle
   bone that lies flat when the cat sits.
-- **Feet** come from a **gait clock** that advances with distance travelled, so
-  they never skate; a lateral-sequence walk blends into a rotary gallop.
+- **Paws** are planted in world space. When the pose drifts away from a planted
+  paw (turning, sitting down, shifting weight) it takes a quick arcing step, in
+  diagonal pairs, landing a little ahead of where the body is going.
+- **Gait:** while moving, paws follow a **gait clock** that advances with
+  distance travelled, so they never skate. The walk is a lateral sequence; the
+  gallop is a rotary gallop modelled on Muybridge's photographs, with two flight
+  phases per stride (stretched out after the hind push, bunched up after the
+  fore push) and the spine extending and gathering on those beats.
+- **Jumps** have stages: the hind paws stay planted while the body extends off
+  them, the forelegs tuck, the body stretches in flight, and the forelegs reach
+  down so they land before the hind legs.
 - **Tail:** a chain of angle springs, stiffer at the root, so the tip trails.
 - **Turning** is choreographed (head, then shoulders, then hips), with the
   spine's heading blended along its length so the body curls round.
@@ -153,4 +166,4 @@ the program uses a few percent of one core.
 - Under about 100 columns the fastfetch pane takes up a lot of the screen (the
   cat walks in front of it). Press `i` to hide it.
 - There's no 256-colour fallback: it's truecolor or `--ascii`.
-- Paws slide slightly while the cat turns on the spot.
+- The wall is the bare screen edge, so there's nothing visible for the paws to touch.

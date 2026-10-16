@@ -791,6 +791,8 @@ POSES = {
                    tailA=-0.1, tailC=0.02, tailS=0.04, pup=0.9),
     'stretch': dict(hx=-6.4, hy=9.6, sx=6.2, sy=3.6, arch=-1.6, hdx=4.6, hdy=1.4, htilt=0.35, ffx=13.0,
                     hfx=-6.4, ear=0.5, eye=0.15, tailA=1.5, tailC=0.04),
+    'launch': dict(hx=-7.2, hy=7.0, sx=6.2, sy=10.6, arch=-0.5, hdx=4.4, hdy=3.6, ffx=6.5, ffy=6.5, hfx=-11.0,
+                   hfy=1.0, tailA=0.2, tailC=0.03, ear=0.2),
     'air': dict(hx=-7.0, hy=8.6, sx=6.6, sy=9.2, arch=-0.4, hdx=4.4, hdy=3.4, ffx=11.0, ffy=6.0, hfx=-12.5,
                 hfy=5.5, tailA=0.35, tailC=0.05, ear=0.25),
     'reach': dict(hx=-3.6, hy=7.0, sx=0.8, sy=13.5, arch=-0.2, hdx=2.0, hdy=4.2, htilt=0.6, ffx=4.0, ffy=13.0,
@@ -892,7 +894,8 @@ class Cat:
         self.bob_h = self.bob_s = self.flex = 0.0
         self.pex, self.pey, self.pexv, self.peyv = [0.0] * 4, [0.0] * 4, [0.0] * 4, [0.0] * 4
         self.pext, self.peyt = [0.0] * 4, [0.0] * 4
-        self.lift, self.liftv, self.fwx = [0.0] * 4, [0.0] * 4, [None] * 4
+        self.feet = [dict(mode='free', pos=None) for _ in range(4)]
+        self.plant_until = [0.0] * 4          # keep these paws planted while airborne (jump take-off)
         self.ta = [PI - 1.0 - 0.14 * i for i in range(TAIL_N)]
         self.tv = [0.0] * TAIL_N
         self.tail_tw, self.tail_freq = 0.0, 0.3
@@ -938,7 +941,7 @@ class Cat:
             self.level = 'floor'
         self.x = clamp(self.x * fx, *w.bounds(self.level))
         self.y = w.ground(self.level, self.x)
-        self.fwx = [None] * 4
+        self.feet = [dict(mode='free', pos=None) for _ in range(4)]
 
     # ----------------------------------------------------------- frame update
     def update(self, dt):
@@ -1093,33 +1096,29 @@ class Cat:
         # gait clock: feet are a function of travelled distance, so they never skate
         gal, stride = cur['gal'], clamp(cur['stride'], 0, 1)
         L = 8.5 + 9.5 * gal
-        duty = 0.62 - 0.24 * gal
+        duty = 0.62 - 0.34 * gal
         lift_h = 1.5 + 1.6 * gal
         self.phase = (self.phase + self.v * dt / L) % 1.0
         for i in range(4):
             ph = (self.phase + lerp(WALK_OFF[i], GAL_OFF[i], gal)) % 1.0
             if ph < duty:
-                fx, fy = 0.5 - ph / duty, 0.0
+                fx, fy, reach = 0.5 - ph / duty, 0.0, 0.0
             else:
                 s = (ph - duty) / (1 - duty)
                 fx, fy = -0.5 + smooth(s), math.sin(PI * s)
-            self.gx[i] = fx * L * duty * stride
+                reach = gal * (3.0 if i < 2 else 3.5) * math.sin(PI * s ** 1.6)  # legs reach late in the swing
+            self.gx[i] = (fx * L * duty + reach) * stride
             self.gy[i] = fy * lift_h * stride
+        # Rotary gallop after Muybridge: hind pair lands at phase 0, fore pair at ~0.55. The body flies
+        # stretched out after the hind push (~0.47) and bunched up after the fore push (~0.97); the
+        # spine extends and gathers on those beats and the chest dips while the forelegs are down.
         P = self.phase * TAU
-        self.bob_h = stride * ((1 - gal) * 0.3 * math.cos(2 * P) + gal * 1.1 * math.sin(P + 0.6))
-        self.bob_s = stride * ((1 - gal) * 0.3 * math.cos(2 * P + 1.2) + gal * 1.1 * math.sin(P + 0.6 + PI))
-        self.flex = stride * gal * 1.4 * math.sin(P)
-        # feet that move sideways without the gait (turning, shuffling) step instead of sliding
-        c = math.cos(self.th)
-        for i in range(4):
-            base = (cur['ffx'] if i < 2 else cur['hfx']) + self.gx[i] + self.pex[i]
-            wx = self.x + base * c * self.S
-            sp = abs(wx - self.fwx[i]) / dt / self.S if self.fwx[i] is not None and dt > 0 else 0.0
-            self.fwx[i] = wx
-            on_ground = (cur['ffy'] if i < 2 else cur['hfy']) < 1.6 and not self.airborne
-            alt = max(0.0, math.sin(self.t * TAU * 2.2 + (0 if i in (0, 3) else PI)))
-            tg = clamp(sp * 0.11, 0, 1.6) * (1 - stride) * alt if on_ground else 0.0
-            self.lift[i], self.liftv[i] = spring(self.lift[i], self.liftv[i], tg, 22, dt)
+        lift = gal * (0.5 + 0.5 * math.cos(2 * (P - 0.47 * TAU)))
+        pitch = gal * 0.9 * math.sin(P - 0.5 * TAU)
+        self.bob_h = stride * ((1 - gal) * 0.3 * math.cos(2 * P) + 1.2 * lift + pitch)
+        self.bob_s = stride * ((1 - gal) * 0.3 * math.cos(2 * P + 1.2) + 1.2 * lift - pitch)
+        self.flex = stride * gal * 2.0 * math.cos(P - 0.47 * TAU)
+        self.place_feet(stride)
         # tail: per-segment angle springs, stiffer at the root so the tip lags (overlap)
         base = PI - cur['tailA']
         cum = 0.0
@@ -1131,6 +1130,68 @@ class Cat:
             tg = base - cum + sway + tw
             tg += (PI - tg) * trail * (0.3 + 0.7 * i / TAIL_N)
             self.ta[i], self.tv[i] = spring(self.ta[i], self.tv[i], tg, 15 - 8 * i / TAIL_N, dt)
+
+    def paw_target(self, i):
+        """Where the pose wants paw i: world (x px, y px, depth units)."""
+        c, S = self.cur, self.S
+        front = i < 2
+        a = self.th if front else self.thr
+        f = (c['ffx'] - (0.5 if i == 1 else 0) if front else c['hfx'] + (0.6 if i == 3 else 0)) \
+            + self.gx[i] + self.pex[i]
+        u = max(1.0, (c['ffy'] if front else c['hfy']) + self.gy[i] + self.pey[i])
+        lat = LEG_LAT[i]
+        return (self.x + (f * math.cos(a) - lat * math.sin(a)) * S, self.y - u * S, f * math.sin(a) + lat * math.cos(a))
+
+    def place_feet(self, stride):
+        """Paws stay planted in the world and take a quick arcing step, in diagonal pairs, once the
+        pose has drifted away from them. The gait clock, reaching paws and jumps drive them directly."""
+        S, t = self.S, self.t
+        due = []
+        for i, f in enumerate(self.feet):
+            tgt = self.paw_target(i)
+            prev = f.get('last', tgt)
+            f['last'] = tgt
+            vel = tuple((tgt[j] - prev[j]) / max(self.dt, 1e-3) for j in range(3))
+            base_u = self.cur['ffy' if i < 2 else 'hfy']
+            free = (self.airborne and t >= self.plant_until[i]) or stride > 0.3 or abs(self.pex[i]) > 0.25 \
+                or self.pey[i] > 0.35 or base_u > 1.6
+            if free:
+                if f['mode'] != 'free':  # let go smoothly instead of snapping to the pose
+                    f['mode'], f['rel'], f['rel_t'] = 'free', f['pos'], t
+                k = smooth((t - f.get('rel_t', -9)) / 0.15)
+                r = f.get('rel') or tgt
+                f['pos'] = tuple(lerp(r[j], tgt[j], k) for j in range(3))
+                continue
+            if f['mode'] == 'free':
+                pos = f['pos'] or tgt
+                if abs(pos[1] - tgt[1]) < 0.4 * S and math.hypot((pos[0] - tgt[0]) / S, pos[2] - tgt[2]) < 0.6:
+                    f['mode'], f['pos'] = 'plant', tgt
+                else:
+                    f.update(mode='swing', start=pos, t0=t, dur=0.18)
+            if f['mode'] == 'swing':
+                e = (t - f['t0']) / f['dur']
+                # land a little ahead of where the pose is heading, so the paw stays planted longer
+                lead = 0.12 * (1 - e) + 0.12
+                end = (tgt[0] + vel[0] * lead, tgt[1], tgt[2] + vel[2] * lead)
+                if e >= 1:
+                    f['mode'], f['pos'] = 'plant', end
+                else:
+                    k, (x0, y0, z0) = smooth(e), f['start']
+                    hop = 1.3 * S * math.sin(PI * e)
+                    f['pos'] = (lerp(x0, end[0], k), lerp(y0, end[1], k) - hop, lerp(z0, end[2], k))
+            elif not self.airborne:
+                x0, y0, z0 = f['pos']
+                err = math.hypot((x0 - tgt[0]) / S, z0 - tgt[2]) + abs(y0 - tgt[1]) / S
+                if err > 1.1:
+                    due.append((err, i))
+        swinging = {i for i, f in enumerate(self.feet) if f['mode'] == 'swing'}
+        for err, i in sorted(due, reverse=True):
+            # step alongside the diagonal partner (0-3, 1-2); a badly stretched leg steps regardless
+            if (swinging - {3 - i} and err < 2.6) or len(swinging) >= 3:
+                continue
+            f = self.feet[i]
+            f.update(mode='swing', start=f['pos'], t0=t, dur=0.13 + 0.01 * min(err, 6))
+            swinging.add(i)
 
     def drives(self, dt):
         if self.asleep:
@@ -1255,9 +1316,10 @@ class Cat:
             lat = LEG_LAT[i]
             front = i < 2
             a = thf if front else thr
-            pf = (p['ffx'] - (0.5 if i == 1 else 0) if front else p['hfx'] + (0.6 if i == 3 else 0)) \
-                + self.gx[i] + self.pex[i]
-            pu = max(1.0, (p['ffy'] if front else p['hfy']) + self.gy[i] + self.pey[i] + self.lift[i])
+            fp = self.feet[i]['pos'] or self.paw_target(i)
+            px_, pu, pz_ = (fp[0] - X0) / S, (Y0 - fp[1]) / S, fp[2]
+            pf = px_ * math.cos(a) + pz_ * math.sin(a)
+            plat = -px_ * math.sin(a) + pz_ * math.cos(a)          # where the paw sits sideways
             near = lat * math.cos(a) >= 0
             col = pal['fur'] if near else pal['far']
             paw = pal['paw'] if near else pal['paw_f']
@@ -1280,10 +1342,11 @@ class Cat:
                 nf, nu, kf, ku = ik(hf, hu, kf, ku, 3.0, 3.4, 1)
                 bones = (((hf, hu), (nf, max(nu, 0.9)), 2.2, 1.5), ((nf, max(nu, 0.9)), (kf, ku), 1.3, 1.05),
                          ((kf, ku), (pf, pu), 1.05, 0.95))
+            lats = (lat, lat, lerp(lat, plat, 0.5), plat)   # joints drift sideways toward the paw
             for k, ((f0, u0), (f1, u1), ra, rr) in enumerate(bones):
-                A, Bp = at((0, 0, 0), a, f0, u0, lat), at((0, 0, 0), a, f1, u1, lat)
+                A, Bp = at((0, 0, 0), a, f0, u0, lats[k]), at((0, 0, 0), a, f1, u1, lats[k + 1])
                 add((A[2] + k * 0.001, 1, *P(A), *P(Bp), ra * S, rr * S, col, 1.0))
-            A, Bp = at((0, 0, 0), a, pf, pu, lat), at((0, 0, 0), a, pf + 0.8, pu - 0.05, lat)
+            A, Bp = at((0, 0, 0), a, pf, pu, plat), at((0, 0, 0), a, pf + 0.8, pu - 0.05, plat)
             add((A[2] + 0.003, 1, *P(A), *P(Bp), 1.08 * S, 1.0 * S, paw, 1.0))
 
         # tail: chain of angle springs in the hip plane
@@ -1598,8 +1661,11 @@ class Cat:
         top = min(y0, y1) - h * S
         hh = (y0 + y1) / 2 - top
         dur = 0.32 + 0.011 * abs(tx - x0) / S + 0.014 * max(0.0, (y0 - y1) / S) + 0.01 * h
-        self.set_pose(air)
+        staged = air == 'air'  # take-off with forelegs tucked, stretched flight, reach down to land
+        self.set_pose('launch' if staged else air)
+        stage = 0
         base_sy, base_hy = self.tgt['sy'], self.tgt['hy']
+        self.plant_until = [self.t, self.t, self.t + 0.11, self.t + 0.11]
         self.airborne, self.v, self.vt, self.tgt['stride'] = True, 0.0, 0.0, 0.0
         self.snap = 1.6
         t0, flipped = self.t, False
@@ -1610,10 +1676,14 @@ class Cat:
             self.x = lerp(x0, tx, u)
             self.y = lerp(y0, y1, u) - 4 * hh * u * (1 - u)
             vyu = (y1 - y0) - 4 * hh * (1 - 2 * u)
-            pitch = clamp(math.atan2(-vyu, abs(tx - x0) + 6 * S), -0.7, 0.7) if air == 'air' else 0.0
+            if staged and stage < (1 if u < 0.6 else 2) and u > 0.28:
+                stage = 1 if u < 0.6 else 2
+                self.set_pose('air')
+                if stage == 2:  # forelegs reach down for the landing, hind legs tuck
+                    self.tgt.update(ffx=8.0, ffy=1.5, hfx=-5.5, hfy=4.0)
+                base_sy, base_hy = self.tgt['sy'], self.tgt['hy']
+            pitch = clamp(math.atan2(-vyu, abs(tx - x0) + 6 * S), -0.7, 0.7) if staged else 0.0
             self.tgt['sy'], self.tgt['hy'] = base_sy + pitch * 4, base_hy - pitch * 4
-            if u > 0.55 and air == 'air':  # reach for the landing
-                self.tgt.update(ffx=8.0, ffy=1.5, hfx=-7.0, hfy=3.0)
             if flip and not flipped and u > 0.35:
                 self.aim(-self.dir)
                 self.th_k, flipped = 16.0, True
