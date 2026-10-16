@@ -1209,20 +1209,24 @@ class Cat:
                     f['mode'], f['pos'] = 'plant', end
                 else:
                     k, (x0, y0, z0) = smooth(e), f['start']
-                    hop = 1.3 * S * math.sin(PI * e)
+                    hop = f.get('hop', 1.3) * S * math.sin(PI * e)
                     f['pos'] = (lerp(x0, end[0], k), lerp(y0, end[1], k) - hop, lerp(z0, end[2], k))
             elif not self.airborne:
                 x0, y0, z0 = f['pos']
                 err = math.hypot((x0 - tgt[0]) / S, z0 - tgt[2]) + abs(y0 - tgt[1]) / S
-                if err > 1.1:
+                if err > (0.45 if self.turning else 1.1):
                     due.append((err, i))
         swinging = {i for i, f in enumerate(self.feet) if f['mode'] == 'swing'}
         for err, i in sorted(due, reverse=True):
-            # step alongside the diagonal partner (0-3, 1-2); a badly stretched leg steps regardless
-            if (swinging - {3 - i} and err < 2.6) or len(swinging) >= 3:
+            if self.turning:
+                # walking round: left and right of each pair alternate, front and hind independently
+                if (i ^ 1) in swinging or len(swinging) >= 2:
+                    continue
+            elif (swinging - {3 - i} and err < 2.6) or len(swinging) >= 3:
+                # step alongside the diagonal partner (0-3, 1-2); a badly stretched leg steps regardless
                 continue
             f = self.feet[i]
-            f.update(mode='swing', start=f['pos'], t0=t, dur=0.13 + 0.01 * min(err, 6))
+            f.update(mode='swing', start=f['pos'], t0=t, dur=0.13 + 0.012 * min(err, 6), hop=1.2 + 0.3 * min(err, 6))
             swinging.add(i)
 
     def drives(self, dt):
@@ -1502,26 +1506,35 @@ class Cat:
             return
         self.vt = 0.0
         yield from self.until(lambda: self.v < 0.3, 1.5)
-        # the front walks round while the hips nearly pivot in place, so the
-        # body ends up a few steps along instead of spinning on its centre
-        pivot = self.x - 4 * self.S * math.cos(self.th)
+        # A cat turns round by pivoting on its hind legs: the pelvis stays put while the
+        # front half walks round in an arc, so the head ends up about where the tail was.
+        # The planted paws are left behind by the swinging body and step to keep up.
+        S = self.S
         lo, hi = self.sim.world.bounds(self.level)
+        hx = self.cur['hx']
+        pelvis = self.x + hx * S * math.cos(self.thr)
         self.aim(d)
         g, t0 = self.th_goal, self.t
         a0h, a0f, a0r = self.thh, self.th, self.thr
-        dur = self.rng.uniform(1.05, 1.35) * TURN_K / self.th_k
+        turn = g - a0f
+        final = pelvis - hx * S * math.cos(g)
+        drift = clamp(final, lo, hi) - final   # near a wall the hips have to shuffle too
+        dur = self.rng.uniform(1.1, 1.4) * TURN_K / self.th_k
         self.turning = True
         while True:
             u = min(1.0, (self.t - t0) / dur)
-            # head first, shoulders swing well past halfway before the hips follow
-            self.thh = lerp(a0h, g, smooth(u / 0.4))
-            self.th = lerp(a0f, g, smooth(u / 0.68))
-            self.thr = lerp(a0r, g, smooth((u - 0.3) / 0.7))
+            axis = lerp(a0r, g, smooth(u))                      # pelvis -> chest direction
+            curl = 0.6 * math.sin(PI * u) * (1 if turn > 0 else -1)  # front curls ahead into the turn
+            self.thh = lerp(a0h, g, smooth(u / 0.55))
+            self.th = axis + curl
+            self.thr = axis - 0.5 * curl
             self.dip = math.sin(PI * u)
-            self.x = clamp(pivot + 4 * self.S * math.cos((self.th + self.thr) / 2), lo, hi)
+            px = pelvis + drift * smooth(u)
+            self.x = clamp(px - hx * S * math.cos(self.thr), lo - 3 * S, hi + 3 * S)
             if u >= 1:
                 break
             yield
+        self.th = self.thr = g
         self.turning, self.dip = False, 0.0
         self.thhv = self.thv = self.thrv = 0.0
         k = round(self.th_goal / TAU)
